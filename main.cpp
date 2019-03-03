@@ -8,14 +8,13 @@ inline auto IsFileExists(char* filename)
     return (stat (filename, &buffer) == 0);
 }
 
-inline auto ArgvToCmdLine(char* app, int argc, char* argv[])
+inline auto ArgvToCmdLine(int argc, char* argv[])
 {
     std::string buffer;
-    (buffer = app) += ' ';
     for (int i = 0; i < argc; i++)
         (buffer += argv[i]) += ' ';
 
-    return (char*)buffer.c_str();
+    return buffer;
 }
 
 inline auto PathToName(std::string path)
@@ -66,7 +65,9 @@ int main(int argc, char* argv[])
 
     STARTUPINFOA sInfo = { sizeof(STARTUPINFOA) };
     PROCESS_INFORMATION pInfo;
-    if (!CreateProcessA(argv[1],(argc > 3) ? ArgvToCmdLine(argv[1], argc - 3, &argv[3]) : NULL, NULL, NULL, FALSE, 0, NULL, NULL, &sInfo, &pInfo))
+    std::string cmdline;
+    ((cmdline = argv[1]) += ' ') += ArgvToCmdLine(argc - 3, &argv[3]);
+    if (!CreateProcessA(argv[1], (char*)cmdline.c_str(), NULL, NULL, FALSE, 0, NULL, NULL, &sInfo, &pInfo))
         error("CreateProcess fail");
 
     InjectDll(pInfo.hProcess, argv[2]);
