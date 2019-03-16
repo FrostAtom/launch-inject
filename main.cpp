@@ -32,16 +32,23 @@ inline auto error(const char* text)
     exit(0);
 }
 
-inline auto InjectDll(HANDLE hProc, std::string dllname)
+inline bool InjectDll(DWORD dwPID, std::string dllname)
 {
-    auto lpLoadLibraryA = (LPTHREAD_START_ROUTINE)GetProcAddress(GetModuleHandleA("kernel32"), "LoadLibraryA");
+    auto res = false;
+    if (auto hProcess = OpenProcess(PROCESS_VM_OPERATION|PROCESS_VM_WRITE|PROCESS_VM_READ|PROCESS_CREATE_THREAD|PROCESS_QUERY_INFORMATION, FALSE, dwPID)){
+        if (auto lpAddr = VirtualAllocEx(hProcess, NULL, dllname.size(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)){
+            if (WriteProcessMemory(hProcess, lpAddr, dllname.c_str(), dllname.size(), NULL)){
+                auto lpLoadLibraryA = (LPTHREAD_START_ROUTINE)GetProcAddress(GetModuleHandleA("kernel32"), "LoadLibraryA");
+                if (auto hThread = CreateRemoteThread(hProcess, NULL, 0, lpLoadLibraryA, lpAddr, 0, NULL)){
+                    res = WaitForSingleObject(hThread,10 * 1000) != WAIT_TIMEOUT;
+                    CloseHandle(hThread);
+                }
+            }
+            VirtualFreeEx(hProcess, lpAddr, dllname.size(), MEM_FREE);
+        }
+    }
 
-    auto lpAddr = VirtualAllocEx(hProc, NULL, dllname.size(), MEM_COMMIT, PAGE_READWRITE);
-    WriteProcessMemory(hProc, lpAddr, dllname.c_str(), dllname.size(), NULL);
-    auto hThread = CreateRemoteThread(hProc, NULL, 0, lpLoadLibraryA, lpAddr, 0, NULL);
-    WaitForSingleObject(hThread,10000);
-    CloseHandle(hThread);
-    VirtualFreeEx(hProc, lpAddr, dllname.size(), MEM_FREE);
+    return res;
 }
 
 int main(int argc, char* argv[])
