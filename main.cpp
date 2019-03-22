@@ -32,7 +32,7 @@ inline auto error(const char* text)
     exit(0);
 }
 
-inline bool InjectDll(HANDLE dwPID, std::string dllname)
+inline bool InjectDll(HANDLE hProcess, std::string dllname)
 {
     auto res = false;
     if (auto lpAddr = VirtualAllocEx(hProcess, NULL, dllname.size(), MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE)){
