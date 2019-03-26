@@ -72,7 +72,7 @@ int main(int argc, char* argv[])
     PROCESS_INFORMATION pInfo;
     std::string cmdline;
     ((cmdline = argv[1]) += ' ') += ArgvToCmdLine(argc - 3, &argv[3]);
-    if (!CreateProcessA(argv[1], (char*)cmdline.c_str(), NULL, NULL, FALSE, 0, NULL, NULL, &sInfo, &pInfo))
+    if (!CreateProcessA(argv[1], cmdline.data(), NULL, NULL, FALSE, 0, NULL, NULL, &sInfo, &pInfo))
         error("CreateProcess fail");
 
     InjectDll(pInfo.hProcess, argv[2]);
