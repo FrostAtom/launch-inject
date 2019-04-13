@@ -1,3 +1,7 @@
 # launch-inject
 
-start program and inject dll by one click. Usage: launch program.exe library.dll [command line]
+Launch and injecting program in one click, supported injecting multiple dlls.
+Usage:
+launch.exe appname libname1 libname2 libname3 ...
+launch.exe appname directorywithlibsname
+And any combinations. You can rename injector to appname_libname1_libname2_directorywithlibsname.exe(example) and use without cmdline
