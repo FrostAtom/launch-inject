@@ -1,130 +1,107 @@
 #include <Windows.h>
-#include <filesystem>
-#include <iostream>
+#include <cstdio>
 #include <string>
 #include <vector>
-#include <sstream>
+#include <filesystem>
+#define TIMEFORWAIT 10 * 1000 // 10 seconds
 
-std::string prog, args;
-std::vector<std::string> dlls;
 
-inline auto Error(const char* format, ...)
+namespace fs = std::filesystem;
+
+std::string cmdLine, exePath;
+std::vector<std::string> dllPaths;
+
+void error(const char* format, ...)
 {
-	AllocConsole();
-	freopen("CONOUT$", "w", stdout);
-
+	printf("fail: ");
 	va_list argptr;
 	va_start(argptr, format);
 	printf(format, argptr);
 	va_end(argptr);
-	printf("\r\n");
 
-	getchar();
 	exit(0);
 }
 
-inline auto InjectDll(LPTHREAD_START_ROUTINE loadlibrarya, HANDLE hProcess, const std::string& dllname)
+void error_usage()
+{
+	error("Usage:"
+		"\t-c \"cmd line\" -- pass command line to executable\n"
+		"\t-d \"path\" -- insert dll to injecting queue\n"
+		"\t-e \"path\" -- assing executable file\n"
+	);
+}
+
+void ParseCommandLineOptions(int argc, char* argv[])
+{
+	for (int i = 1; i < argc; i += 2){
+		if (argv[i+1][0] && (argv[i][0] == '-' || argv[i][0] == '/')){
+			switch(tolower(argv[i][1])){
+			case 'c':
+				cmdLine.append(argv[i+1]);
+				continue;
+			case 'd':
+				dllPaths.push_back(argv[i+1]);
+				continue;
+			case 'e':
+				exePath.append(argv[i+1]);
+				continue;
+			}
+		}
+
+		error_usage();
+	}
+}
+
+bool Inject(HANDLE hProcess, const std::string& dllPath, FARPROC procLoadLibraryA)
 {
 	bool res = false;
-	if (auto lpAddr = VirtualAllocEx(hProcess, NULL, dllname.size(), MEM_COMMIT, PAGE_READWRITE)) {
-		if (WriteProcessMemory(hProcess, lpAddr, dllname.c_str(), dllname.size(), NULL)) {
-			if (auto hThread = CreateRemoteThread(hProcess, FALSE, 0, loadlibrarya, lpAddr, 0, NULL)) {
-				res = WaitForSingleObject(hThread, 10 * 1000) == WAIT_OBJECT_0;
+	if (auto lpAddr = VirtualAllocEx(hProcess, NULL, dllPath.size(), MEM_COMMIT, PAGE_READWRITE)) {
+		if (WriteProcessMemory(hProcess, lpAddr, dllPath.c_str(), dllPath.size(), NULL)) {
+			if (auto hThread = CreateRemoteThread(hProcess, FALSE, 0, (LPTHREAD_START_ROUTINE)procLoadLibraryA, lpAddr , 0, NULL)) {
+				res = WaitForSingleObject(hThread, TIMEFORWAIT) == WAIT_OBJECT_0;
 				CloseHandle(hThread);
 			}
 		}
-		VirtualFreeEx(hProcess, lpAddr, dllname.size(), MEM_FREE);
+		VirtualFreeEx(hProcess, lpAddr, dllPath.size(), MEM_FREE);
 	}
-	return res;
-}
 
-inline auto strsplit(const std::string& str, char delim)
-{
-	std::stringstream strstream(str);
-	std::vector<std::string> res;
-	for (std::string item; std::getline(strstream, item, delim);)
-		res.push_back(item);
-	
 	return res;
-}
-
-inline auto PutToContainer(const std::string& strpath)
-{
-	if (std::filesystem::exists(strpath)) {
-		auto abspath = std::filesystem::absolute(strpath);
-		if (std::filesystem::is_directory(abspath)) {
-			for (auto& file : std::filesystem::directory_iterator(abspath)) {
-				auto filepath = file.path();
-				if (filepath.extension().compare(".dll") == 0)
-					dlls.push_back(filepath.string());
-			}
-		} else if(std::filesystem::is_regular_file(abspath)) {
-			if (abspath.extension().compare(".dll") == 0)
-				dlls.push_back(abspath.string());
-			else if ((abspath.extension().compare(".exe") == 0)) {
-				if (prog.empty())
-					prog = abspath.string();
-				else
-					Error("%s\r\nProgram alredy assigned!", strpath);
-			}
-			else
-				Error("%s\r\nUnknown file extension. Expected \".exe\" or \".dll\"", abspath.c_str());
-		}else
-			Error("%s\r\nUnknown file type.", abspath.c_str());
-	}
-	else {
-		if (std::filesystem::exists(strpath + ".dll"))
-			dlls.push_back(strpath + ".dll");
-		else if(std::filesystem::exists(strpath + ".exe")){
-			if (prog.empty())
-				prog = std::filesystem::absolute(strpath + ".exe").string();
-			else
-				Error("%s\r\nProgram alredy assigned!", strpath);
-		}
-		else
-			args.append(strpath).append(" ");
-	}
 }
 
 int main(int argc, char* argv[])
 {
-	auto launch = std::filesystem::path(argv[0]);
+	printf("Visit program homepage https://github.com/FrostAtom/launch-inject\n");
 
-	auto vector = strsplit(launch.stem().string(), '_');
-	if (vector.size() <= 1) {
-		vector.clear();
-		for (int8_t i = 1; i < argc; i++)
-			vector.push_back(argv[i]);
+	ParseCommandLineOptions(argc,argv);
+
+	if (exePath.empty())
+		error("path of executable file is not assigned.\n");
+
+	if (!fs::exists(exePath))
+		error("executable file is not exists.\n");
+
+	for (const auto& val : dllPaths){
+		if (!fs::exists(val))
+			error("dll file %s is not exists!\n",val.c_str());
 	}
-	else {
-		for (int8_t i = 1; i < argc; i++)
-			args.append(argv[i]).append(" ");
-	}
 
-
-	for (auto& val : vector)
-		PutToContainer(val);
-
-	if (prog.empty())
-		Error("Program is not assigned");
-
-	args.insert(0, std::filesystem::absolute(prog).string().append(" "));
 
 	STARTUPINFOA sInfo = { sizeof(STARTUPINFOA) };
 	PROCESS_INFORMATION pInfo;
-	
-	if (!CreateProcessA(prog.c_str(), args.data(), NULL, NULL, FALSE, 0, NULL, NULL, &sInfo, &pInfo))
-		Error("Program launch fail");
 
-	auto loadlibrarya = (LPTHREAD_START_ROUTINE)GetProcAddress(GetModuleHandleA("kernel32"), "LoadLibraryA");
-	for (auto& dll : dlls) {
-		if (!InjectDll(loadlibrarya, pInfo.hProcess, dll))
-			Error("%s\r\nInjection fail.", dll.c_str());
+	if (!CreateProcessA(exePath.c_str(), cmdLine.data(), NULL, NULL, FALSE, 0, NULL, NULL, &sInfo, &pInfo)){
+		DWORD* exitCode = NULL;
+		GetExitCodeProcess(pInfo.hProcess, exitCode);
+		error("process creating error code: %lu\n", exitCode);
 	}
 
-	WaitForSingleObject(pInfo.hProcess, INFINITE);
-	CloseHandle(pInfo.hProcess);
-	CloseHandle(pInfo.hThread);
+	HMODULE hKernel = GetModuleHandleA("kernel32");
+	FARPROC procLoadLibraryA = GetProcAddress(hKernel, "LoadLibraryA");
+
+	for (const auto& val : dllPaths){
+		if (!Inject(pInfo.hProcess, val, procLoadLibraryA))
+			error("can't inject %s\n", val.c_str());
+	}
 
 	return 0;
 }
