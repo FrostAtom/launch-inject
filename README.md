@@ -1,6 +1,6 @@
 # launch-inject
 
-One click program launching and inject dll library
+One click launching executable file and injecting dll library
 
 ## Usage
 
