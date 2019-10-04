@@ -26,7 +26,8 @@ void error_usage()
 {
 	error("Usage:"
 		"\t-c \"cmd line\" -- pass command line to executable\n"
-		"\t-d \"path\" -- insert dll to injecting queue\n"
+		"\t-l \"path\" -- insert dll to injecting queue\n"
+		"\t-d \"path\" -- insert directory to inject queue\n"
 		"\t-e \"path\" -- assing executable file\n"
 	);
 }
@@ -39,8 +40,20 @@ void ParseCommandLineOptions(int argc, char* argv[])
 			case 'c':
 				cmdLine.append(argv[i+1]);
 				continue;
-			case 'd':
+			case 'l':
 				dllPaths.push_back(argv[i+1]);
+				continue;
+			case 'd':
+				if (fs::is_directory(argv[i+1])) {
+					for (const auto& file : fs::directory_iterator(argv[i+1])) {
+						if (file.path().extension().compare(".dll") == 0){
+							dllPaths.push_back(file.path().string());
+						}
+					}
+				}
+				else{
+					error("%s is not directory!\n",argv[i+1]);
+				}
 				continue;
 			case 'e':
 				exePath.append(argv[i+1]);
