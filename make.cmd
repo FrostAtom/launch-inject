@@ -1,1 +1,1 @@
-g++ main.cpp -o launch.exe -O3 -std=c++17 -lstdc++fs
+clang++ main.cpp -o launch.exe -O3 -std=c++2a -MJ compile_commands.json -Wl,--strip-all -fvisibility=hidden -fvisibility-inlines-hidden -lboost_filesystem-mt -static

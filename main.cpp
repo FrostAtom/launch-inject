@@ -2,18 +2,19 @@
 #include <cstdio>
 #include <string>
 #include <vector>
-#include <filesystem>
+#include <boost/filesystem.hpp>
 #define TIMEFORWAIT 10 * 1000 // 10 seconds
 
 
-namespace fs = std::filesystem;
+namespace fs = boost::filesystem;
 
-std::string cmdLine, exePath;
-std::vector<std::string> dllPaths;
+LPTHREAD_START_ROUTINE lpLoadLibraryA = NULL;
+DWORD delay = 0;
+std::string cmdline, exe;
+std::vector<std::string> dlls;
 
-void error(const char* format, ...)
+inline void error(const char* format, ...)
 {
-	printf("fail: ");
 	va_list argptr;
 	va_start(argptr, format);
 	printf(format, argptr);
@@ -22,55 +23,63 @@ void error(const char* format, ...)
 	exit(0);
 }
 
-void error_usage()
+inline void error_usage()
 {
-	error("Usage:"
-		"\t-c \"cmd line\" -- pass command line to executable\n"
-		"\t-l \"path\" -- insert dll to injecting queue\n"
-		"\t-d \"path\" -- insert directory to inject queue\n"
-		"\t-e \"path\" -- assing executable file\n"
+	error("Usage:\n"
+		  "    -c \"cmd line\" // pass command line to executable\n"
+		  "    -d \"delay\"    // set delay in miliseconds beetwen program start and inject\n"
 	);
 }
 
-void ParseCommandLineOptions(int argc, char* argv[])
+inline void error_unknown_argument(const char* arg)
 {
-	for (int i = 1; i < argc; i += 2){
-		if (argv[i+1][0] && (argv[i][0] == '-' || argv[i][0] == '/')){
-			switch(tolower(argv[i][1])){
-			case 'c':
-				cmdLine.append(argv[i+1]);
-				continue;
-			case 'l':
-				dllPaths.push_back(argv[i+1]);
-				continue;
-			case 'd':
-				if (fs::is_directory(argv[i+1])) {
-					for (const auto& file : fs::directory_iterator(argv[i+1])) {
-						if (file.path().extension().compare(".dll") == 0){
-							dllPaths.push_back(file.path().string());
-						}
+	error("unknown argument: %s\n",arg);
+}
+
+void HandleCommandLine(int argc, char* argv[])
+{
+	for (int i = 1; i < argc; i++){
+		if (strlen(argv[i]) == 2) {
+			if ((argv[i][0] == '-' || argv[i][0] == '/') && i+1 <= argc) {
+				switch(tolower(argv[i][1])) {
+				case 'c':
+					cmdline = argv[i+1];
+					break;
+				case 'd':
+					delay = std::stoul(argv[i+1]);
+					break;
+				default:
+					error_unknown_argument(argv[i]);
+				}
+				i++;
+			} else
+				error_unknown_argument(argv[i]);
+		} else {
+			if (fs::exists(argv[i])) {
+				if (fs::is_regular_file(argv[i])) {
+					auto extension = fs::extension(argv[i]);
+					if (extension == ".dll")
+						dlls.push_back(argv[i]);
+					else if (extension == ".exe")
+						exe = argv[i];
+				} else if (fs::is_directory(argv[i])) {
+					for (const auto& file : fs::directory_iterator(argv[i])) {
+						if (file.path().extension() == ".dll")
+							dlls.push_back(file.path().string());
 					}
 				}
-				else{
-					error("%s is not directory!\n",argv[i+1]);
-				}
-				continue;
-			case 'e':
-				exePath.append(argv[i+1]);
-				continue;
-			}
+			} else
+				error_unknown_argument(argv[i]);
 		}
-
-		error_usage();
 	}
 }
 
-bool Inject(HANDLE hProcess, const std::string& dllPath, FARPROC procLoadLibraryA)
+bool Inject(HANDLE hProcess, const std::string& dllPath)
 {
 	bool res = false;
 	if (auto lpAddr = VirtualAllocEx(hProcess, NULL, dllPath.size(), MEM_COMMIT, PAGE_READWRITE)) {
 		if (WriteProcessMemory(hProcess, lpAddr, dllPath.c_str(), dllPath.size(), NULL)) {
-			if (auto hThread = CreateRemoteThread(hProcess, FALSE, 0, (LPTHREAD_START_ROUTINE)procLoadLibraryA, lpAddr , 0, NULL)) {
+			if (auto hThread = CreateRemoteThread(hProcess, FALSE, 0, lpLoadLibraryA, lpAddr , 0, NULL)) {
 				res = WaitForSingleObject(hThread, TIMEFORWAIT) == WAIT_OBJECT_0;
 				CloseHandle(hThread);
 			}
@@ -85,35 +94,30 @@ int main(int argc, char* argv[])
 {
 	printf("Visit program homepage https://github.com/FrostAtom/launch-inject\n");
 
-	ParseCommandLineOptions(argc,argv);
+	HandleCommandLine(argc,argv);
 
-	if (exePath.empty())
-		error("path of executable file is not assigned.\n");
-
-	if (!fs::exists(exePath))
-		error("executable file is not exists.\n");
-
-	for (const auto& val : dllPaths){
-		if (!fs::exists(val))
-			error("dll file %s is not exists!\n",val.c_str());
-	}
+	if (exe.empty() || dlls.empty())
+		error("exe or dll file(s) isn't assigned.\n");
 
 
 	STARTUPINFOA sInfo = { sizeof(STARTUPINFOA) };
 	PROCESS_INFORMATION pInfo;
 
-	if (!CreateProcessA(exePath.c_str(), cmdLine.data(), NULL, NULL, FALSE, 0, NULL, NULL, &sInfo, &pInfo)){
-		DWORD* exitCode = NULL;
-		GetExitCodeProcess(pInfo.hProcess, exitCode);
-		error("process creating error code: %lu\n", exitCode);
+	if (!CreateProcessA(exe.c_str(),(char*)cmdline.data(),NULL,NULL,FALSE,0,NULL,NULL,&sInfo,&pInfo)) {
+		DWORD dwExitCode;
+		GetExitCodeProcess(pInfo.hProcess, &dwExitCode);
+		error("CreateProcess exit code: %lu\n",dwExitCode);
 	}
 
 	HMODULE hKernel = GetModuleHandleA("kernel32");
-	FARPROC procLoadLibraryA = GetProcAddress(hKernel, "LoadLibraryA");
+	lpLoadLibraryA = (LPTHREAD_START_ROUTINE)GetProcAddress(hKernel, "LoadLibraryA");
+	
+	if (delay)
+		Sleep(delay);
 
-	for (const auto& val : dllPaths){
-		if (!Inject(pInfo.hProcess, val, procLoadLibraryA))
-			error("can't inject %s\n", val.c_str());
+	for (const auto& dll : dlls){
+		if (!Inject(pInfo.hProcess, dll)) 
+			error("can't inject %s\n", dll.c_str());
 	}
 
 	return 0;
