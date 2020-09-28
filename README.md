@@ -1,4 +1,4 @@
-# launch-inject Preview
+# Preview
 
 Launch executable program and inject one or more dll library file with one click.
 
