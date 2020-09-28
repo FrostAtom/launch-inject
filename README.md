@@ -1,11 +1,12 @@
-# launch-inject
+# launch-inject Preview
 
-Program launch + injection of one\multiple dll files in 1 click
+Launch executable program and inject one or more dll library file with one click.
 
 ## Usage
 
 ```
-U must pass minimum 2 arguments in cmdline: executable file path and path of dll file or directory with dll files. Situational:
--c "cmd line" // pass command line to executable
--d "delay"    // set delay in miliseconds beetwen program start and inject
+-h [ --help ]         show help
+-e [ --exe ] arg      path to exe file [REQUIRED]
+-d [ --dll ] arg      path to dll library (can be used one more times)
+-c [ --cmdline ] arg  cmdline for pass to executable
 ```
