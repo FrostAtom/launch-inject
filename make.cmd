@@ -1,1 +1,1 @@
-clang++ main.cpp -o launch.exe -O3 -std=c++2a -MJ compile_commands.json -Wl,--strip-all -fvisibility=hidden -fvisibility-inlines-hidden -lboost_filesystem-mt -static
+clang++ main.cpp -o injector.exe -std=c++20 -Ofast -MJ compile_commands.json -Wl,--strip-all -fvisibility=hidden -fvisibility-inlines-hidden -lboost_filesystem-mt -lboost_program_options-mt -static

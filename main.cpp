@@ -1,124 +1,99 @@
-#include <Windows.h>
-#include <cstdio>
-#include <string>
-#include <vector>
+#include <boost/program_options.hpp>
 #include <boost/filesystem.hpp>
-#define TIMEFORWAIT 10 * 1000 // 10 seconds
+#include <windows.h>
+#include <string>
+#include <iostream>
+
+namespace po = boost::program_options;
 
 
-namespace fs = boost::filesystem;
-
-LPTHREAD_START_ROUTINE lpLoadLibraryA = NULL;
-DWORD delay = 0;
-std::string cmdline, exe;
-std::vector<std::string> dlls;
-
-inline void error(const char* format, ...)
+void ErrorOccured(const char* message = NULL,const char* additionalInfo = NULL)
 {
-	va_list argptr;
-	va_start(argptr, format);
-	printf(format, argptr);
-	va_end(argptr);
+	if (AttachConsole(ATTACH_PARENT_PROCESS) || AllocConsole()) {
+		freopen("conout$","w",stdout);
 
-	exit(0);
-}
-
-inline void error_usage()
-{
-	error("Usage:\n"
-		  "    -c \"cmd line\" // pass command line to executable\n"
-		  "    -d \"delay\"    // set delay in miliseconds beetwen program start and inject\n"
-	);
-}
-
-inline void error_unknown_argument(const char* arg)
-{
-	error("unknown argument: %s\n",arg);
-}
-
-void HandleCommandLine(int argc, char* argv[])
-{
-	for (int i = 1; i < argc; i++){
-		if (strlen(argv[i]) == 2) {
-			if ((argv[i][0] == '-' || argv[i][0] == '/') && i+1 <= argc) {
-				switch(tolower(argv[i][1])) {
-				case 'c':
-					cmdline = argv[i+1];
-					break;
-				case 'd':
-					delay = std::stoul(argv[i+1]);
-					break;
-				default:
-					error_unknown_argument(argv[i]);
-				}
-				i++;
-			} else
-				error_unknown_argument(argv[i]);
-		} else {
-			if (fs::exists(argv[i])) {
-				if (fs::is_regular_file(argv[i])) {
-					auto extension = fs::extension(argv[i]);
-					if (extension == ".dll")
-						dlls.push_back(argv[i]);
-					else if (extension == ".exe")
-						exe = argv[i];
-				} else if (fs::is_directory(argv[i])) {
-					for (const auto& file : fs::directory_iterator(argv[i])) {
-						if (file.path().extension() == ".dll")
-							dlls.push_back(file.path().string());
-					}
-				}
-			} else
-				error_unknown_argument(argv[i]);
-		}
+		std::cout << "Error has been occured!" << std::endl;
+		if (message) std::cout << "Message: " << message << std::endl;
+		if (additionalInfo) std::cout << "Additional info: " << additionalInfo << std::endl;
+		std::cout << "Last error code: " << GetLastError() << std::endl;
+		system("pause");
 	}
+
+	exit(EXIT_FAILURE);
 }
 
-bool Inject(HANDLE hProcess, const std::string& dllPath)
+bool InjectLibrary(HANDLE hProcess, const char* filePath)
 {
-	bool res = false;
-	if (auto lpAddr = VirtualAllocEx(hProcess, NULL, dllPath.size(), MEM_COMMIT, PAGE_READWRITE)) {
-		if (WriteProcessMemory(hProcess, lpAddr, dllPath.c_str(), dllPath.size(), NULL)) {
-			if (auto hThread = CreateRemoteThread(hProcess, FALSE, 0, lpLoadLibraryA, lpAddr , 0, NULL)) {
-				res = WaitForSingleObject(hThread, TIMEFORWAIT) == WAIT_OBJECT_0;
-				CloseHandle(hThread);
+	static FARPROC pLoadLibraryA = NULL;
+	if (!pLoadLibraryA) {
+		HMODULE hModule = GetModuleHandleA("kernel32");
+		if (hModule == NULL) return false;
+
+		pLoadLibraryA = GetProcAddress(hModule,"LoadLibraryA");
+		if (!pLoadLibraryA) return false;
+	}
+
+	bool result = false;
+	size_t szBuffer = strlen(filePath) + 1;
+	if (void* lpBuffer = VirtualAllocEx(hProcess,NULL,szBuffer,MEM_COMMIT,PAGE_READWRITE)) {
+		SIZE_T bytesWritten = 0;
+		if (WriteProcessMemory(hProcess,lpBuffer,filePath,szBuffer,&bytesWritten)) {
+			if (bytesWritten == szBuffer) {
+				if (HANDLE hThread = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)pLoadLibraryA,lpBuffer,0,NULL))
+					result = WaitForSingleObject(hThread,10 * 1e3) == WAIT_OBJECT_0;
 			}
 		}
-		VirtualFreeEx(hProcess, lpAddr, dllPath.size(), MEM_FREE);
+		
+		VirtualFreeEx(hProcess,lpBuffer,szBuffer,MEM_DECOMMIT);
 	}
 
-	return res;
+	return result;
 }
 
-int main(int argc, char* argv[])
+int main(int argc, char** argv)
 {
-	printf("Visit program homepage https://github.com/FrostAtom/launch-inject\n");
+	std::vector<std::string> pathDllList;
+	std::string pathExe,cmdline;
+	{
+		po::variables_map vm;
+		po::options_description desc("Allowed options");
+		desc.add_options()
+			("help,h","show help")
+			("exe,e",po::value<std::string>(&pathExe),"path to exe file [REQUIRED]")
+			("dll,d",po::value<std::vector<std::string>>(&pathDllList)->multitoken(),"path to dll library (can be used one more times)")
+			("cmdline,c",po::value<std::string>(&cmdline),"cmdline for pass to executable");
 
-	HandleCommandLine(argc,argv);
+		po::store(po::parse_command_line(argc,argv,desc),vm);
+		po::notify(vm);
 
-	if (exe.empty() || dlls.empty())
-		error("exe or dll file(s) isn't assigned.\n");
+		if (vm.count("help") || !vm.count("exe")) {
+			std::cout << desc << std::endl;
+			return 0;
+		}
+	}
 
-
-	STARTUPINFOA sInfo = { sizeof(STARTUPINFOA) };
 	PROCESS_INFORMATION pInfo;
+	memset(&pInfo,NULL,sizeof(pInfo));
 
-	if (!CreateProcessA(exe.c_str(),(char*)cmdline.data(),NULL,NULL,FALSE,0,NULL,NULL,&sInfo,&pInfo)) {
-		DWORD dwExitCode;
-		GetExitCodeProcess(pInfo.hProcess, &dwExitCode);
-		error("CreateProcess exit code: %lu\n",dwExitCode);
+	STARTUPINFOA sInfo;
+	memset(&sInfo,NULL,sizeof(sInfo));
+	sInfo.cb = sizeof(sInfo);
+
+
+	std::string formatedCmdLine;
+	formatedCmdLine.append("\"").append(pathExe).append("\" ").append(cmdline);
+	std::string pathParent = boost::filesystem::absolute(pathExe).parent_path().string();
+	if (!CreateProcessA(pathExe.c_str(),(char*)formatedCmdLine.c_str(),NULL,NULL,FALSE,CREATE_SUSPENDED,NULL,pathParent.c_str(),&sInfo,&pInfo))
+		ErrorOccured("CreateProcessA() fail!");
+
+	for (const auto& pathDll : pathDllList) {
+		if (!InjectLibrary(pInfo.hProcess,pathDll.c_str()))
+			ErrorOccured("InjectLibrary() fail!",pathDll.c_str());
 	}
 
-	HMODULE hKernel = GetModuleHandleA("kernel32");
-	lpLoadLibraryA = (LPTHREAD_START_ROUTINE)GetProcAddress(hKernel, "LoadLibraryA");
-	
-	if (delay)
-		Sleep(delay);
-
-	for (const auto& dll : dlls){
-		if (!Inject(pInfo.hProcess, dll)) 
-			error("can't inject %s\n", dll.c_str());
-	}
+	ResumeThread(pInfo.hThread);
+	CloseHandle(pInfo.hThread);
+	CloseHandle(pInfo.hProcess);
 
 	return 0;
 }
