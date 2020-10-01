@@ -19,8 +19,6 @@ void ErrorOccured(const char* message = NULL,const char* additionalInfo = NULL)
 	std::cout << "Last error code: " << GetLastError() << std::endl;
 		
 	system("pause");
-	FreeConsole();
-	exit(EXIT_FAILURE);
 }
 
 bool InjectLibrary(HANDLE hProcess, const char* filePath,DWORD dwMilliseconds = 10 * 1e3)
@@ -38,11 +36,9 @@ bool InjectLibrary(HANDLE hProcess, const char* filePath,DWORD dwMilliseconds = 
 	size_t szBuffer = strlen(filePath) + 1;
 	if (void* lpBuffer = VirtualAllocEx(hProcess,NULL,szBuffer,MEM_COMMIT,PAGE_READWRITE)) {
 		SIZE_T bytesWritten = 0;
-		if (WriteProcessMemory(hProcess,lpBuffer,filePath,szBuffer,&bytesWritten)) {
-			if (bytesWritten == szBuffer) {
-				if (HANDLE hThread = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)pLoadLibraryA,lpBuffer,0,NULL))
-					result = (WaitForSingleObject(hThread,dwMilliseconds) == WAIT_OBJECT_0);
-			}
+		if (WriteProcessMemory(hProcess,lpBuffer,filePath,szBuffer,&bytesWritten) && bytesWritten == szBuffer) {
+			if (HANDLE hThread = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)pLoadLibraryA,lpBuffer,0,NULL))
+				result = (WaitForSingleObject(hThread,dwMilliseconds) == WAIT_OBJECT_0);
 		}
 		
 		VirtualFreeEx(hProcess,lpBuffer,szBuffer,MEM_DECOMMIT);
@@ -85,16 +81,22 @@ int main(int argc, char** argv)
 	formatedCmdLine.append("\"").append(pathExe).append("\" ").append(cmdline);
 
 	std::string pathParent = fs::absolute(pathExe).parent_path().string();
-	if (!CreateProcessA(pathExe.c_str(),(char*)formatedCmdLine.c_str(),NULL,NULL,FALSE,CREATE_SUSPENDED,NULL,pathParent.c_str(),&sInfo,&pInfo))
+	if (!CreateProcessA(pathExe.c_str(),(char*)formatedCmdLine.c_str(),NULL,NULL,FALSE,CREATE_SUSPENDED,NULL,pathParent.c_str(),&sInfo,&pInfo)) {
 		ErrorOccured("CreateProcess() fail!");
+		return 0;
+	}
 
 	for (const auto& pathDll : pathDllList) {
-		if (!fs::is_regular_file(pathDll) || fs::extension(pathDll).compare(".dll") != 0)
+		if (!fs::is_regular_file(pathDll) || fs::extension(pathDll).compare(".dll") != 0) {
 			ErrorOccured("Library file invalid!",pathDll.c_str());
+			continue;
+		}
 
 		std::string absolutePathDll = boost::filesystem::absolute(pathDll).string();
-		if (!InjectLibrary(pInfo.hProcess,absolutePathDll.c_str()))
-			ErrorOccured("InjectLibrary() fail!",pathDll.c_str());
+		if (!InjectLibrary(pInfo.hProcess,absolutePathDll.c_str())) {
+			ErrorOccured("InjectLibrary() fail!",absolutePathDll.c_str());
+			continue;
+		}
 	}
 
 	ResumeThread(pInfo.hThread);
