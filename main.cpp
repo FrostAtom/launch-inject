@@ -5,24 +5,25 @@
 #include <iostream>
 
 namespace po = boost::program_options;
+namespace fs = boost::filesystem;
 
 
 void ErrorOccured(const char* message = NULL,const char* additionalInfo = NULL)
 {
-	if (AttachConsole(ATTACH_PARENT_PROCESS) || AllocConsole()) {
-		freopen("conout$","w",stdout);
+	AttachConsole(ATTACH_PARENT_PROCESS);
+	AllocConsole();
 
-		std::cout << "Error has been occured!" << std::endl;
-		if (message) std::cout << "Message: " << message << std::endl;
-		if (additionalInfo) std::cout << "Additional info: " << additionalInfo << std::endl;
-		std::cout << "Last error code: " << GetLastError() << std::endl;
-		system("pause");
-	}
-
+	std::cout << "Error has been occured!" << std::endl;
+	if (message) std::cout << "Message: " << message << std::endl;
+	if (additionalInfo) std::cout << "Additional info: " << additionalInfo << std::endl;
+	std::cout << "Last error code: " << GetLastError() << std::endl;
+		
+	system("pause");
+	FreeConsole();
 	exit(EXIT_FAILURE);
 }
 
-bool InjectLibrary(HANDLE hProcess, const char* filePath)
+bool InjectLibrary(HANDLE hProcess, const char* filePath,DWORD dwMilliseconds = 10 * 1e3)
 {
 	static FARPROC pLoadLibraryA = NULL;
 	if (!pLoadLibraryA) {
@@ -40,7 +41,7 @@ bool InjectLibrary(HANDLE hProcess, const char* filePath)
 		if (WriteProcessMemory(hProcess,lpBuffer,filePath,szBuffer,&bytesWritten)) {
 			if (bytesWritten == szBuffer) {
 				if (HANDLE hThread = CreateRemoteThread(hProcess,NULL,0,(LPTHREAD_START_ROUTINE)pLoadLibraryA,lpBuffer,0,NULL))
-					result = WaitForSingleObject(hThread,10 * 1e3) == WAIT_OBJECT_0;
+					result = (WaitForSingleObject(hThread,dwMilliseconds) == WAIT_OBJECT_0);
 			}
 		}
 		
@@ -68,6 +69,7 @@ int main(int argc, char** argv)
 
 		if (vm.count("help") || !vm.count("exe")) {
 			std::cout << desc << std::endl;
+			system("pause");
 			return 0;
 		}
 	}
@@ -79,15 +81,19 @@ int main(int argc, char** argv)
 	memset(&sInfo,NULL,sizeof(sInfo));
 	sInfo.cb = sizeof(sInfo);
 
-
 	std::string formatedCmdLine;
 	formatedCmdLine.append("\"").append(pathExe).append("\" ").append(cmdline);
-	std::string pathParent = boost::filesystem::absolute(pathExe).parent_path().string();
+
+	std::string pathParent = fs::absolute(pathExe).parent_path().string();
 	if (!CreateProcessA(pathExe.c_str(),(char*)formatedCmdLine.c_str(),NULL,NULL,FALSE,CREATE_SUSPENDED,NULL,pathParent.c_str(),&sInfo,&pInfo))
-		ErrorOccured("CreateProcessA() fail!");
+		ErrorOccured("CreateProcess() fail!");
 
 	for (const auto& pathDll : pathDllList) {
-		if (!InjectLibrary(pInfo.hProcess,pathDll.c_str()))
+		if (!fs::is_regular_file(pathDll) || fs::extension(pathDll).compare(".dll") != 0)
+			ErrorOccured("Library file invalid!",pathDll.c_str());
+
+		std::string absolutePathDll = boost::filesystem::absolute(pathDll).string();
+		if (!InjectLibrary(pInfo.hProcess,absolutePathDll.c_str()))
 			ErrorOccured("InjectLibrary() fail!",pathDll.c_str());
 	}
 
