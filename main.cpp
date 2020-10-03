@@ -47,6 +47,21 @@ bool InjectLibrary(HANDLE hProcess, const char* filePath,DWORD dwMilliseconds = 
 	return result;
 }
 
+bool ExecFile(const std::string& pathExe, const std::string& cmdline, PROCESS_INFORMATION& pInfo)
+{
+	memset(&pInfo,NULL,sizeof(pInfo));
+
+	STARTUPINFOA sInfo;
+	memset(&sInfo,NULL,sizeof(sInfo));
+	sInfo.cb = sizeof(sInfo);
+
+	std::string formatedCmdLine;
+	formatedCmdLine.append("\"").append(pathExe).append("\" ").append(cmdline);
+
+	std::string pathParent = fs::absolute(pathExe).parent_path().string();
+	return NULL != CreateProcessA(pathExe.c_str(),(char*)formatedCmdLine.c_str(),NULL,NULL,FALSE,CREATE_SUSPENDED,NULL,pathParent.c_str(),&sInfo,&pInfo);
+}
+
 int main(int argc, char** argv)
 {
 	std::vector<std::string> pathDllList;
@@ -71,17 +86,7 @@ int main(int argc, char** argv)
 	}
 
 	PROCESS_INFORMATION pInfo;
-	memset(&pInfo,NULL,sizeof(pInfo));
-
-	STARTUPINFOA sInfo;
-	memset(&sInfo,NULL,sizeof(sInfo));
-	sInfo.cb = sizeof(sInfo);
-
-	std::string formatedCmdLine;
-	formatedCmdLine.append("\"").append(pathExe).append("\" ").append(cmdline);
-
-	std::string pathParent = fs::absolute(pathExe).parent_path().string();
-	if (!CreateProcessA(pathExe.c_str(),(char*)formatedCmdLine.c_str(),NULL,NULL,FALSE,CREATE_SUSPENDED,NULL,pathParent.c_str(),&sInfo,&pInfo)) {
+	if (!ExecFile(pathExe,cmdline,pInfo)) {
 		ErrorOccured("CreateProcess() fail!");
 		return 0;
 	}
