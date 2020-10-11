@@ -133,13 +133,14 @@ int main(int argc, char** argv)
 {
 	std::vector<std::string> dllList;
 	std::string exe,cmdline;
-	bool launchermode;
+	bool isInLauncherMode;
 	{
 		po::variables_map vm;
 		po::options_description desc("Allowed options");
 		desc.add_options()
 			("help,h","show help")
 			("launchermode,l","mode with start exe file")
+			("pause,p","pause beetwen start exe and injecting (used in launchermode only)")
 			("exe,e",po::value<std::string>(&exe),"launchermode - path to exe file, overtwice process name [REQUIRED]")
 			("dll,d",po::value<std::vector<std::string>>(&dllList)->multitoken(),"path to dll library (can be used one more times)")
 			("cmdline,c",po::value<std::string>(&cmdline),"cmdline for pass to executable");
@@ -154,16 +155,16 @@ int main(int argc, char** argv)
 			return 0;
 		}
 
-		launchermode = vm.count("launchermode") != 0;
+		isInLauncherMode = vm.count("launchermode") != 0;
 	}
 
-	if (launchermode) {
+	if (isInLauncherMode) {
 		PROCESS_INFORMATION pInfo;
 		if (!ExecFile(exe,cmdline,pInfo)) {
 			ErrorOccured("CreateProcess() fail!");
 			return 0;
 		}
-
+		
 		InjectLibraryList(pInfo.hProcess,dllList);
 		ResumeThread(pInfo.hThread);
 		CloseHandle(pInfo.hThread);
